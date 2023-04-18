@@ -1,5 +1,5 @@
 """
-    BEDROC(y, yhat; rev = true, α = 20.0)
+    BEDROC(y::AbstractVector{Bool}, yhat::AbstractVector; rev::Bool=true, α::AbstractFloat=20.0)
 
 The Boltzmann Enhanced Descrimination of the Receiver Operator Characteristic (BEDROC) score
 is a modification of the Receiver Operator Characteristic (ROC) score that allows for a factor
@@ -10,7 +10,7 @@ detects (early) the positive class.
 
 # Arguments
 - `y::AbstractArray`: Binary class labels. 1 for positive class, 0 otherwise.
-- `̂yhat::AbstractArray`: Prediction values.
+- `̂yhat::AbstractArray`: Prediction scores.
 - `rev::Bool`: True if high values of ``yhat`` correlates to positive class (default = true).
 - `α::AbstractFloat`: Early recognition parameter (default = 20.0).
 
@@ -38,13 +38,13 @@ function BEDROC(y::AbstractVector{Bool}, yhat::AbstractVector; rev::Bool=true, �
 end
 
 """
-    AuROC(y::AbstractArray{Bool}, yhat::AbstractVector{Number})
+    AuROC(y::AbstractVector{Bool}, yhat::AbstractVector)
 
 Area under the Receiver Operator Characteristic curve using the trapezoidal rule.
 
 # Arguments
 - `y::AbstractArray`: Binary class labels. 1 for positive class, 0 otherwise.
-- `̂yhat::AbstractArray`: Prediction values.
+- `̂yhat::AbstractArray`: Prediction scores.
 """
 function AuROC(y::AbstractVector{Bool}, yhat::AbstractVector)
     @assert length(y) == length(yhat) "The number of scores must be equal to the number of labels"
@@ -63,13 +63,13 @@ function AuROC(y::AbstractVector{Bool}, yhat::AbstractVector)
 end
 
 """
-    AuPRC(y::AbstractArray{Bool}, yhat::AbstractArray{Number})
+    AuPRC(y::AbstractVector{Bool}, yhat::AbstractVector)
 
 Area under the Precision-Recall curve using the trapezoidal rule.
 
 # Arguments
 - `y::AbstractArray`: Binary class labels. 1 for positive class, 0 otherwise.
-- `̂yhat::AbstractArray`: Prediction values.
+- `̂yhat::AbstractArray`: Prediction scores.
 """
 function AuPRC(y::AbstractVector{Bool}, yhat::AbstractVector)
     @assert length(y) == length(yhat) "The number of scores must be equal to the number of labels"
@@ -104,7 +104,7 @@ end
 #     return R_L * N / L
 
 """
-    f1score(tn::T, fp::T, fn::T, tp::T) where {T<:Integer)
+    f1score(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
 
 The harmonic mean between precision and recall
 
@@ -115,6 +115,8 @@ The harmonic mean between precision and recall
 - `tp::Integer` True positives
 """
 function f1score(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
+
     numerator = tp
     denominator = tp + 0.5 * (fp + fn)
 
@@ -126,6 +128,43 @@ function f1score(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
 end
 f1score(confusion::ROCNums) = f1score(confusion.tn, confusion.fp, confusion.fn, confusion.tp)
 
+"""
+    mcc(a::T, b::T, ϵ::AbstractFloat = 0.0001) where {T<:Integer}
+
+Matthews correlation coefficient using calculus approximation for when
+FN+TN, FP+TN, TP+FN or TP+FP equals zero.
+
+# Arguments
+- `a::Integer` = Value of position `a` in confusion matrix
+- `b::Integer` = Value of position `b` in confusion matrix
+- `ϵ::AbstractFloat` = Approximation coefficient (default = floatmin(Float64))
+
+# Extended help
+The confusion matrix in a binary prediction is comprised of 4 distinct positions:
+```
+                    | Predicted positive     Predicted negative
+    ----------------+--------------------------------------------
+    Actual positive |  True positives (TP)   False negatives (FN)
+    Actual negative | False positives (FP)    True negatives (TN)
+```
+
+In the case a row or column of the confusion matrix equals zero, MCC is undefined.
+Therefore, to correctly use MCC with this approximation, arguments `a` and `b` are
+defined as follows:
+
+- If "Predictive positive" column is zero, `a` is TN and `b` is FN
+- If "Predictive negative" column is zero, `a` is TP and `b` is FP
+- If "Actual positive" row is zero, `a` is TN and `b` is FP
+- If "Actual negative" row is zero, `a` is TP and `b` is FN
+
+# Reference
+1.Chicco, D., Jurman, G. The advantages of the Matthews correlation coefficient
+(MCC) over F1 score and accuracy in binary classification evaluation.
+BMC Genomics 21, 6 (2020).
+"""
+function mcc(a::T, b::T, ϵ::AbstractFloat=floatmin(Float64)) where {T<:Integer}
+    return (a*ϵ - b*ϵ)/ sqrt((a+b)*(a+ϵ)*(b+ϵ)*(ϵ+ϵ))
+end
 
 """
     mcc(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
@@ -144,12 +183,32 @@ Performance metric used for overcoming the class imbalance issues
 BMC Genomics 21, 6 (2020).
 """
 function mcc(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
-    numerator = (tp * tn) - (fp * fn)
-    denominator = sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
 
-    if denominator == 0
-        return NaN
+    # Calculate row and column-wise sum of confusion matrix
+    p_pred = tp + fp
+    n_pred = fn + tn
+    p_actual = tp + fn
+    n_actual = fp + tn
+
+    # Use approximation if the sum of either a row or column is zero
+    # NOTE: Based in the reference bellow, some confusion matrices can take an
+    #       indefinite form 0/0, therefore to ensure correct handling of those
+    #       cases we opt to reimplement the calculus approximation instead of
+    #       returning a "missing" or "nan" value. Please refer to the reference
+    #       section in the docstrings for more information regarding this case.
+    if p_pred == 0
+        return mcc(tn, fn)
+    elseif n_pred == 0
+        return mcc(tp, fp)
+    elseif p_actual == 0
+        return mcc(tn, fp)
+    elseif n_actual == 0
+        return mcc(tp, fn)
     else
+        numerator = (tp * tn) - (fp * fn)
+        denominator = sqrt(p_pred * n_pred * p_actual * n_actual)
+
         return numerator / denominator
     end
 end
@@ -167,6 +226,8 @@ The number of all correct predictions divided by the total predicitions
 - `tp::Integer` True positives
 """
 function accuracy(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
+
     numerator = tp + tn
     denominator = (tp + tn) + (fp + fn)
 
@@ -192,6 +253,8 @@ its use case is when dealing with imbalanced data
 - `tp::Integer` True positives
 """
 function balancedaccuracy(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
+
     tpr = tp / (tp + fn)
     tnr = tn / (tn + fp)
 
@@ -211,6 +274,8 @@ The fraction of positive samples correctly predicted as postive
 - `tp::Integer` True positives
 """
 function recall(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
+
     p = tp + fn
 
     if p == 0
@@ -233,6 +298,8 @@ The fraction of positive predictions that are correct
 - `tp::Integer` True positives
 """
 function precision(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
+    @assert tn + fp + fn + tp > 0 "Confusion matrix sums zero!"
+
     d = tp + fp
 
     if d == 0
@@ -243,22 +310,82 @@ function precision(tn::T, fp::T, fn::T, tp::T) where {T<:Integer}
 end
 precision(confusion::ROCNums) = precision(confusion.tn, confusion.fp, confusion.fn, confusion.tp)
 
-function performanceatL(
-    y::AbstractVector{Bool},
-    yhat::AbstractVector,
-    metric::Function,
-    L::Integer=20
-)
-    @assert length(y) == length(yhat) "The number of scores must be equal to the number of labels"
+"""
+    recallatL(y, yhat, grouping, L)
 
-    # Sort predictions by score
-    order = sortperm(yhat, rev=true)
+Get recall@L as proposed by Wu, et al (2017).
 
-    # Cuantify performance using top L predictions
-    yₗ = Int64.(first(y[order], L))
-    yhatₗ = Int64.(ones(L))
+# Arguments
+- `y::AbstractVector`: Binary class labels. 1 for positive class, 0 otherwise.
+- `̂yhat::AbstractVector`: Prediction score.
+- `grouping::AbstractVector`: Group labels.
+- `L::Integer`: Length to consider to calculate metrics (default = 20).
+"""
+function recallatL(y, yhat, grouping, L::Integer=20)
+    @assert L > 0 "Please use a list length greater than 0 (L > 0)"
+    @assert length(y) == length(yhat) "Number of predictions and labels don't match"
+    @assert length(y) > L "Number of labels is less than length (L > y)"
+    @assert length(yhat) > L "Number of predictions is less than length (L > yhat)"
 
-    return metric(roc(yₗ, yhatₗ))
+    performance = []
+    for group in unique(grouping)
+        # Get prediction-label pairs for group
+        y_g = y[grouping.==group]
+        yhat_g = yhat[grouping.==group]
+
+        # Sort predictions by score
+        order = sortperm(yhat_g, rev=true)
+        y_g = y_g[order]
+        yhat_g = y_g[order]
+
+        # Calculate recall@n for given group
+        Xi = sum(y_g)
+        Xi_L = sum(first(y_g, L))
+
+        if Xi > 0
+            push!(performance, Xi_L / Xi)
+        else
+            push!(performance, NaN)
+        end
+    end
+
+    return mean(performance)
+end
+
+"""
+    precisionatL(y, yhat, grouping, L)
+
+Get precision@L as proposed by Wu, et al (2017).
+
+# Arguments
+- `y::AbstractVector`: Binary class labels. 1 for positive class, 0 otherwise.
+- `̂yhat::AbstractVector`: Prediction score.
+- `grouping::AbstractVector`: Group labels.
+- `L::Integer`: Length to consider to calculate metrics (default = 20).
+"""
+function precisionatL(y, yhat, grouping, L)
+    @assert L > 0 "Please use a list length greater than 0 (L > 0)"
+    @assert length(y) == length(yhat) "Number of predictions and labels don't match"
+    @assert length(y) > L "Number of labels is less than length (L > y)"
+    @assert length(yhat) > L "Number of predictions is less than length (L > yhat)"
+
+    performance = []
+    for group in unique(grouping)
+        # Get prediction-label pairs for group
+        y_g = y[grouping.==group]
+        yhat_g = yhat[grouping.==group]
+
+        # Sort predictions by score
+        order = sortperm(yhat_g, rev=true)
+        y_g = y_g[order]
+        yhat_g = y_g[order]
+
+        # Calculate precisionj@n for given group
+        Xi_L = sum(first(y_g, L))
+        push!(performance, Xi_L / L)
+    end
+
+    return mean(performance)
 end
 
 """

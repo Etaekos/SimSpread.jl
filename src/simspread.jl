@@ -95,7 +95,7 @@ function cutoff!(M::AbstractVecOrMat{T}, α::T, weighted::Bool=false) where {T<:
 end
 
 """
-    prepare!(DT::T, DF::T, Cs::AbstractVector) where {T<:NamedMatrix}
+    prepare(DT::NamedMatrix, DF::NamedMatrix, Cs::AbstractVector)
 
 Prepare compound-feature-drug-target network adjacency matrix for *de novo* NBI prediction.
 
@@ -107,7 +107,7 @@ Prepare compound-feature-drug-target network adjacency matrix for *de novo* NBI 
 # Extended help
 This implementation is for k-fold or leave-one-out cross-validation.
 """
-function prepare!(DT::T, DF::T, Cs::AbstractVector) where {T<:NamedMatrix}
+function prepare(DT::NamedMatrix, DF::NamedMatrix, Cs::AbstractVector)
     @assert size(DT, 1) == size(DF, 1) "Different number of compounds!"
 
     # Get names from matrices
@@ -115,7 +115,7 @@ function prepare!(DT::T, DF::T, Cs::AbstractVector) where {T<:NamedMatrix}
     Ds = [d for d in names(DF, 1) if d ∉ Cs]
     Ts = names(DT, 2)
 
-    @assert not(all(sorted(Fs) .== sorted(Ds))) "Features and drugs have the same names!"
+    @assert all(sort(Fs) .!= sort(Ds)) "Features and drugs have the same names!"
 
     # Get dimensions of network
     Nc = length(Cs)
@@ -185,7 +185,7 @@ function prepare(dts::T, dfs::T) where {T<:Tuple{NamedMatrix,NamedMatrix}}
     T₀ = names(DT₀, 2)
     D₁ = names(DT₁, 1)
 
-    @assert not(all(sorted(F₀) .== sorted(D₀))) "Features and drugs have the same names!"
+    @assert all(sort(F₀) .!= sort(D₀)) "Features and drugs have the same names!"
 
     # Get dimensions of network
     Nd = length(D₀)
@@ -281,18 +281,15 @@ value.
 # Arguments
 - `M::AbtractMatrix`: Continuous feature matrix
 - `α::AbstractFloat`: Strong-ties cutoff
-- `β::AbstractFloat`: Weak-ties cutoff
 - `weighted::Bool`: Flag for feature weighting using real value
 """
-function featurize(M::NamedArray, α::AbstractFloat, β::AbstractFloat, weighted::Bool)
+function featurize(M::NamedArray, α::AbstractFloat, weighted::Bool)
     # Filter matrix
     Mf = copy(M)
-    Mf.array = cutoff.(M.array, α, β, weighted)
+    Mf.array = cutoff.(M.array, α, weighted)
     setnames!(Mf, ["f$f" for f in names(Mf, 2)], 2)
     return Mf
 end
-
-featurize(M::NamedArray, α::AbstractFloat, weighted::Bool) = featurize(M, α, 0.0, weighted)
 
 """
     predict(A::NamedMatrix, B::NamedMatrix, names::Tuple; GPU::Bool)

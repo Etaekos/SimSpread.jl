@@ -1,5 +1,7 @@
 module SimSpread
 
+import DelimitedFiles.writedlm
+
 using Base
 using CUDA
 using DelimitedFiles
@@ -8,8 +10,6 @@ using NamedArrays
 using Random
 using StatsBase
 using Trapz
-
-import DelimitedFiles.writedlm
 
 include("graphs.jl")
 include("performance.jl")
@@ -24,14 +24,11 @@ export writedlm,
     # SimSpread
     spread,
     cutoff,
-    pcutoff,
+    cutoff!,
     featurize,
-    pfeaturize,
     split,
     prepare,
-    prepare!,
     predict,
-    predict!,
     clean!,
     save,
 
@@ -45,7 +42,8 @@ export writedlm,
     balancedaccuracy,
     recall,
     precision,
-    performanceatL,
+    recallatL,
+    precisionatL,
     meanperformance,
     meanstdperformance,
     maxperformance
